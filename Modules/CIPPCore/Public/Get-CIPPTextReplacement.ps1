@@ -18,17 +18,30 @@ function Get-CIPPTextReplacement {
     if ($Text -isnot [string]) {
         return $Text
     }
-    $blacklist = @(
+
+    $ReservedVariables = @(
         '%serial%',
         '%systemroot%',
         '%systemdrive%',
         '%temp%',
         '%tenantid%',
         '%tenantfilter%',
+        '%initialdomain%',
         '%tenantname%',
         '%partnertenantid%',
-        '%samappid%'
+        '%samappid%',
+        '%userprofile%',
+        '%username%',
+        '%userdomain%',
+        '%windir%',
+        '%programfiles%',
+        '%programfiles(x86)%',
+        '%programdata%',
+        '%cippuserschema%',
+        '%cippurl%',
+        '%defaultdomain%'
     )
+
     $Tenant = Get-Tenants -TenantFilter $TenantFilter
     $CustomerId = $Tenant.customerId
 
@@ -54,17 +67,32 @@ function Get-CIPPTextReplacement {
     # Replace custom variables
     foreach ($Replace in $Vars.GetEnumerator()) {
         $String = '%{0}%' -f $Replace.Key
-        if ($string -notin $blacklist) {
+        if ($string -notin $ReservedVariables) {
             $Text = $Text -replace $String, $Replace.Value
         }
     }
     #default replacements for all tenants: %tenantid% becomes $tenant.customerId, %tenantfilter% becomes $tenant.defaultDomainName, %tenantname% becomes $tenant.displayName
     $Text = $Text -replace '%tenantid%', $Tenant.customerId
     $Text = $Text -replace '%tenantfilter%', $Tenant.defaultDomainName
+    $Text = $Text -replace '%defaultdomain%', $Tenant.defaultDomainName
+    $Text = $Text -replace '%initialdomain%', $Tenant.initialDomainName
     $Text = $Text -replace '%tenantname%', $Tenant.displayName
 
     # Partner specific replacements
     $Text = $Text -replace '%partnertenantid%', $env:TenantID
     $Text = $Text -replace '%samappid%', $env:ApplicationID
+
+    if ($Text -match '%cippuserschema%') {
+        $Schema = Get-CIPPSchemaExtensions | Where-Object { $_.id -match '_cippUser' } | Select-Object -First 1
+        $Text = $Text -replace '%cippuserschema%', $Schema.id
+    }
+
+    if ($Text -match '%cippurl%') {
+        $ConfigTable = Get-CIPPTable -tablename 'Config'
+        $Config = Get-CIPPAzDataTableEntity @ConfigTable -Filter "PartitionKey eq 'InstanceProperties' and RowKey eq 'CIPPURL'"
+        if ($Config) {
+            $Text = $Text -replace '%cippurl%', $Config.Value
+        }
+    }
     return $Text
 }
