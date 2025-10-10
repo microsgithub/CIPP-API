@@ -1,5 +1,3 @@
-using namespace System.Net
-
 Function Invoke-ExecBackendURLs {
     <#
     .FUNCTIONALITY
@@ -9,12 +7,9 @@ Function Invoke-ExecBackendURLs {
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
-
-    $APIName = $Request.Params.CIPPEndpoint
-    Write-LogMessage -headers $Request.Headers -API $APINAME -message 'Accessed this API' -Sev 'Debug'
-
     $Subscription = ($env:WEBSITE_OWNER_NAME).split('+') | Select-Object -First 1
     $SWAName = $env:WEBSITE_SITE_NAME -replace 'cipp', 'CIPP-SWA-'
+
     # Write to the Azure Functions log stream.
     Write-Host 'PowerShell HTTP trigger function processed a request.'
 
@@ -42,8 +37,7 @@ Function Invoke-ExecBackendURLs {
 
     $body = @{Results = $Results }
 
-    # Associate values to output bindings by calling 'Push-OutputBinding'.
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+    return ([HttpResponseContext]@{
             StatusCode = [httpstatusCode]::OK
             Body       = $body
         })

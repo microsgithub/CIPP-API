@@ -27,10 +27,29 @@ function New-CIPPAlertTemplate {
     if ($Data -is [array] -and $Data[0] -is [string]) {
         $Data = $Data | ForEach-Object { @{ message = $_ } }
     }
+    if ($InputObject -eq 'driftStandard') {
+        $Title = "CIPP Alert - Standard Drift Detected for $($Tenant)"
+        $DataHTML = ($Data | ConvertTo-Html | Out-String).Replace('<table>', ' <table class="table-modern">')
+        $IntroText = "<p>You've setup your instance to receive alerts when a tenant is drifting away from your standard. This seems to have happened! We've found the following deviations. </p>$dataHTML"
+        $ButtonUrl = "$CIPPURL/tenant/manage/drift?tenantFilter=$($Tenant)&templateId=$($AuditLogLink)"
+        $ButtonText = 'Investigate and remediate deviations'
+        $AfterButtonText = 'Click the button above to go to the logbook and investigate the deviations. You can also use the standards page to remediate the deviations.'
+    }
 
     if ($InputObject -eq 'sherwebmig') {
         $DataHTML = ($Data | ConvertTo-Html | Out-String).Replace('<table>', ' <table class="table-modern">')
         $IntroText = "<p>The following licenses have not yet been found at Sherweb, and are expiring within 7 days:</p>$dataHTML"
+        if ($data.SherwebMig -like '*buy*') {
+            $introText = "<p>The following licenses have not yet been found at Sherweb, and are expiring within 7 days. We have started the process to automatically buy these licenses:</p>$dataHTML"
+        }
+    }
+    if ($InputObject -eq 'sherwebmigfailcancel') {
+        $DataHTML = ($Data | ConvertTo-Html | Out-String).Replace('<table>', ' <table class="table-modern">')
+        $IntroText = "<p>The following licenses have not been cancelled due to an API error at the old provider:</p>$dataHTML"
+    }
+    if ($InputObject -eq 'sherwebmigBuyFail') {
+        $DataHTML = ($Data | ConvertTo-Html | Out-String).Replace('<table>', ' <table class="table-modern">')
+        $IntroText = "<p>The following licenses have not been bought as we could not find a correctly matching license. Please login and buy the license:</p>$dataHTML"
     }
     if ($InputObject -eq 'table') {
         #data can be a array of strings or a string, if it is, we need to convert it to an object so it shows up nicely, that object will have one header: message.
