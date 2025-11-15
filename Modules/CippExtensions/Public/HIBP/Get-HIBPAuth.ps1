@@ -1,10 +1,11 @@
 function Get-HIBPAuth {
     $Var = 'Ext_HIBP'
-    $APIKey = Get-Item -Path "ENV:$Var" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Value
+    $APIKey = Get-Item -Path "env:$Var" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Value
     if ($APIKey) {
         Write-Information 'Using cached API Key for HIBP'
+        $Secret = $APIKey
     } else {
-        if ($env:AzureWebJobsStorage -eq 'UseDevelopmentStorage=true') {
+        if ($env:AzureWebJobsStorage -eq 'UseDevelopmentStorage=true' -or $env:NonLocalHostAzurite -eq 'true') {
             $DevSecretsTable = Get-CIPPTable -tablename 'DevSecrets'
             $Secret = (Get-CIPPAzDataTableEntity @DevSecretsTable -Filter "PartitionKey eq 'HIBP' and RowKey eq 'HIBP'").APIKey
         } else {
@@ -27,7 +28,7 @@ function Get-HIBPAuth {
                 $Secret = Get-AzKeyVaultSecret -VaultName $VaultName -Name 'HIBP' -AsPlainText
             }
         }
-        Set-Item -Path "ENV:$Var" -Value $APIKey -Force -ErrorAction SilentlyContinue
+        Set-Item -Path "env:$Var" -Value $APIKey -Force -ErrorAction SilentlyContinue
     }
 
     return @{
