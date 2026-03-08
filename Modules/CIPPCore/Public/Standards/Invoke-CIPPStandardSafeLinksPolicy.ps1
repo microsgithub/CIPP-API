@@ -5,21 +5,24 @@ function Invoke-CIPPStandardSafeLinksPolicy {
     .COMPONENT
         (APIName) SafeLinksPolicy
     .SYNOPSIS
-        (Label) Default SafeLinks Policy
+        (Label) Default Safe Links Policy
     .DESCRIPTION
-        (Helptext) This creates a safelink policy that automatically scans, tracks, and and enables safe links for Email, Office, and Teams for both external and internal senders
-        (DocsDescription) This creates a safelink policy that automatically scans, tracks, and and enables safe links for Email, Office, and Teams for both external and internal senders
+        (Helptext) This creates a Safe Links policy that automatically scans, tracks, and and enables safe links for Email, Office, and Teams for both external and internal senders
+        (DocsDescription) This creates a Safe Links policy that automatically scans, tracks, and and enables safe links for Email, Office, and Teams for both external and internal senders
     .NOTES
         CAT
             Defender Standards
         TAG
-            "CIS"
+            "CIS M365 5.0 (2.1.1)"
             "mdo_safelinksforemail"
             "mdo_safelinksforOfficeApps"
+            "NIST CSF 2.0 (DE.CM-09)"
         ADDEDCOMPONENT
+            {"type":"textField","name":"standards.SafeLinksPolicy.name","label":"Policy Name","required":true,"defaultValue":"CIPP Default SafeLinks Policy"}
             {"type":"switch","label":"AllowClickThrough","name":"standards.SafeLinksPolicy.AllowClickThrough"}
             {"type":"switch","label":"DisableUrlRewrite","name":"standards.SafeLinksPolicy.DisableUrlRewrite"}
             {"type":"switch","label":"EnableOrganizationBranding","name":"standards.SafeLinksPolicy.EnableOrganizationBranding"}
+            {"type":"autoComplete","multiple":true,"creatable":true,"required":false,"name":"standards.SafeLinksPolicy.DoNotRewriteUrls","label":"Do not rewrite the following URLs in email"}
         IMPACT
             Low Impact
         ADDEDDATE
@@ -31,32 +34,60 @@ function Invoke-CIPPStandardSafeLinksPolicy {
         UPDATECOMMENTBLOCK
             Run the Tools\Update-StandardsComments.ps1 script to update this comment block
     .LINK
-        https://docs.cipp.app/user-documentation/tenant/standards/list-standards/defender-standards#low-impact
+        https://docs.cipp.app/user-documentation/tenant/standards/list-standards
     #>
 
     param($Tenant, $Settings)
+    $TestResult = Test-CIPPStandardLicense -StandardName 'SafeLinksPolicy' -TenantFilter $Tenant -RequiredCapabilities @('EXCHANGE_S_STANDARD', 'EXCHANGE_S_ENTERPRISE', 'EXCHANGE_S_STANDARD_GOV', 'EXCHANGE_S_ENTERPRISE_GOV', 'EXCHANGE_LITE') #No Foundation because that does not allow powershell access
 
-    $ServicePlans = New-GraphGetRequest -uri 'https://graph.microsoft.com/beta/subscribedSkus?$select=servicePlans' -tenantid $Tenant
-    $ServicePlans = $ServicePlans.servicePlans.servicePlanName
-    $MDOLicensed = $ServicePlans -contains 'ATP_ENTERPRISE'
+    if ($TestResult -eq $false) {
+        return $true
+    } #we're done.
+
+    $TenantCapabilities = Get-CIPPTenantCapabilities -TenantFilter $Tenant
+    $MDOLicensed = $TenantCapabilities.ATP_ENTERPRISE -eq $true
 
     if ($MDOLicensed) {
-        $PolicyList = @('CIPP Default SafeLinks Policy', 'Default SafeLinks Policy')
-        $ExistingPolicy = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksPolicy' | Where-Object -Property Name -In $PolicyList
+        # Single data retrieval calls with error handling
+        try {
+            $AllSafeLinksPolicy = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksPolicy'
+        } catch {
+            $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+            Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the SafeLinksPolicy state for $Tenant. Error: $ErrorMessage" -Sev Error
+            return
+        }
+        try {
+            $AllSafeLinksRule = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksRule'
+        } catch {
+            $ErrorMessage = Get-NormalizedError -Message $_.Exception.Message
+            Write-LogMessage -API 'Standards' -Tenant $Tenant -Message "Could not get the SafeLinksRule state for $Tenant. Error: $ErrorMessage" -Sev Error
+            return
+        }
+
+        # Use custom name if provided, otherwise use default for backward compatibility
+        $PolicyName = if ($Settings.name) { $Settings.name } else { 'CIPP Default SafeLinks Policy' }
+        $PolicyList = @($PolicyName, 'CIPP Default SafeLinks Policy', 'Default SafeLinks Policy')
+        $ExistingPolicy = $AllSafeLinksPolicy | Where-Object -Property Name -In $PolicyList | Select-Object -First 1
         if ($null -eq $ExistingPolicy.Name) {
-            $PolicyName = $PolicyList[0]
+            # No existing policy - use the configured/default name
+            $PolicyName = if ($Settings.name) { $Settings.name } else { 'CIPP Default SafeLinks Policy' }
         } else {
+            # Use existing policy name if found
             $PolicyName = $ExistingPolicy.Name
         }
-        $RuleList = @( 'CIPP Default SafeLinks Rule', 'CIPP Default SafeLinks Policy')
-        $ExistingRule = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksRule' | Where-Object -Property Name -In $RuleList
+        # Derive rule name from policy name, but check for old names for backward compatibility
+        $DesiredRuleName = "$PolicyName Rule"
+        $RuleList = @($DesiredRuleName, 'CIPP Default SafeLinks Rule', 'CIPP Default SafeLinks Policy')
+        $ExistingRule = $AllSafeLinksRule | Where-Object -Property Name -In $RuleList | Select-Object -First 1
         if ($null -eq $ExistingRule.Name) {
-            $RuleName = $RuleList[0]
+            # No existing rule - use the derived name
+            $RuleName = $DesiredRuleName
         } else {
+            # Use existing rule name if found
             $RuleName = $ExistingRule.Name
         }
 
-        $CurrentState = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksPolicy' |
+        $CurrentState = $AllSafeLinksPolicy |
             Where-Object -Property Name -EQ $PolicyName |
             Select-Object Name, EnableSafeLinksForEmail, EnableSafeLinksForTeams, EnableSafeLinksForOffice, TrackClicks, AllowClickThrough, ScanUrls, EnableForInternalSenders, DeliverMessageAfterScan, DisableUrlRewrite, EnableOrganizationBranding, DoNotRewriteUrls
 
@@ -75,7 +106,7 @@ function Invoke-CIPPStandardSafeLinksPolicy {
 
         $AcceptedDomains = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-AcceptedDomain'
 
-        $RuleState = New-ExoRequest -tenantid $Tenant -cmdlet 'Get-SafeLinksRule' |
+        $RuleState = $AllSafeLinksRule |
             Where-Object -Property Name -EQ $RuleName |
             Select-Object Name, SafeLinksPolicy, Priority, RecipientDomainIs
 
@@ -89,7 +120,7 @@ function Invoke-CIPPStandardSafeLinksPolicy {
             if ($StateIsCorrect -eq $true) {
                 Write-LogMessage -API 'Standards' -tenant $Tenant -message 'SafeLink Policy already correctly configured' -sev Info
             } else {
-                $cmdparams = @{
+                $cmdParams = @{
                     EnableSafeLinksForEmail    = $true
                     EnableSafeLinksForTeams    = $true
                     EnableSafeLinksForOffice   = $true
@@ -105,16 +136,16 @@ function Invoke-CIPPStandardSafeLinksPolicy {
 
                 if ($CurrentState.Name -eq $Policyname) {
                     try {
-                        $cmdparams.Add('Identity', $PolicyName)
-                        New-ExoRequest -tenantid $Tenant -cmdlet 'Set-SafeLinksPolicy' -cmdparams $cmdparams -UseSystemMailbox $true
+                        $cmdParams.Add('Identity', $PolicyName)
+                        New-ExoRequest -tenantid $Tenant -cmdlet 'Set-SafeLinksPolicy' -cmdParams $cmdParams -UseSystemMailbox $true
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Updated SafeLink policy $PolicyName." -sev Info
                     } catch {
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to update SafeLink policy $PolicyName." -sev Error -LogData $_
                     }
                 } else {
                     try {
-                        $cmdparams.Add('Name', $PolicyName)
-                        New-ExoRequest -tenantid $Tenant -cmdlet 'New-SafeLinksPolicy' -cmdparams $cmdparams -UseSystemMailbox $true
+                        $cmdParams.Add('Name', $PolicyName)
+                        New-ExoRequest -tenantid $Tenant -cmdlet 'New-SafeLinksPolicy' -cmdParams $cmdParams -UseSystemMailbox $true
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Created SafeLink policy $PolicyName." -sev Info
                     } catch {
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to create SafeLink policy $PolicyName." -sev Error -LogData $_
@@ -123,27 +154,27 @@ function Invoke-CIPPStandardSafeLinksPolicy {
             }
 
             if ($RuleStateIsCorrect -eq $false) {
-                $cmdparams = @{
+                $cmdParams = @{
                     Priority          = 0
                     RecipientDomainIs = $AcceptedDomains.Name
                 }
 
                 if ($RuleState.SafeLinksPolicy -ne $PolicyName) {
-                    $cmdparams.Add('SafeLinksPolicy', $PolicyName)
+                    $cmdParams.Add('SafeLinksPolicy', $PolicyName)
                 }
 
                 if ($RuleState.Name -eq $RuleName) {
                     try {
-                        $cmdparams.Add('Identity', $RuleName)
-                        New-ExoRequest -tenantid $Tenant -cmdlet 'Set-SafeLinksRule' -cmdparams $cmdparams -UseSystemMailbox $true
+                        $cmdParams.Add('Identity', $RuleName)
+                        New-ExoRequest -tenantid $Tenant -cmdlet 'Set-SafeLinksRule' -cmdParams $cmdParams -UseSystemMailbox $true
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Updated SafeLink rule $RuleName." -sev Info
                     } catch {
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to update SafeLink rule $RuleName." -sev Error -LogData $_
                     }
                 } else {
                     try {
-                        $cmdparams.Add('Name', $RuleName)
-                        New-ExoRequest -tenantid $Tenant -cmdlet 'New-SafeLinksRule' -cmdparams $cmdparams -UseSystemMailbox $true
+                        $cmdParams.Add('Name', $RuleName)
+                        New-ExoRequest -tenantid $Tenant -cmdlet 'New-SafeLinksRule' -cmdParams $cmdParams -UseSystemMailbox $true
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Created SafeLink rule $RuleName." -sev Info
                     } catch {
                         Write-LogMessage -API 'Standards' -tenant $Tenant -message "Failed to create SafeLink rule $RuleName." -sev Error -LogData $_
@@ -164,12 +195,36 @@ function Invoke-CIPPStandardSafeLinksPolicy {
 
         if ($Settings.report -eq $true) {
             Add-CIPPBPAField -FieldName 'SafeLinksPolicy' -FieldValue $StateIsCorrect -StoreAs bool -Tenant $tenant
-            if ($StateIsCorrect) {
-                $FieldValue = $true
-            } else {
-                $FieldValue = $CurrentState
+
+            $CurrentValue = @{
+                Name                       = $CurrentState.Name
+                EnableSafeLinksForEmail    = $CurrentState.EnableSafeLinksForEmail
+                EnableSafeLinksForTeams    = $CurrentState.EnableSafeLinksForTeams
+                EnableSafeLinksForOffice   = $CurrentState.EnableSafeLinksForOffice
+                TrackClicks                = $CurrentState.TrackClicks
+                AllowClickThrough          = $CurrentState.AllowClickThrough
+                ScanUrls                   = $CurrentState.ScanUrls
+                EnableForInternalSenders   = $CurrentState.EnableForInternalSenders
+                DeliverMessageAfterScan    = $CurrentState.DeliverMessageAfterScan
+                DisableUrlRewrite          = $CurrentState.DisableUrlRewrite
+                EnableOrganizationBranding = $CurrentState.EnableOrganizationBranding
+                DoNotRewriteUrls           = $CurrentState.DoNotRewriteUrls
             }
-            Set-CIPPStandardsCompareField -FieldName 'standards.SafeLinksPolicy' -FieldValue $FieldValue -Tenant $Tenant
+            $ExpectedValue = @{
+                Name                       = $PolicyName
+                EnableSafeLinksForEmail    = $true
+                EnableSafeLinksForTeams    = $true
+                EnableSafeLinksForOffice   = $true
+                TrackClicks                = $true
+                AllowClickThrough          = $Settings.AllowClickThrough
+                ScanUrls                   = $true
+                EnableForInternalSenders   = $true
+                DeliverMessageAfterScan    = $true
+                DisableUrlRewrite          = $Settings.DisableUrlRewrite
+                EnableOrganizationBranding = $Settings.EnableOrganizationBranding
+                DoNotRewriteUrls           = $Settings.DoNotRewriteUrls.value ?? @()
+            }
+            Set-CIPPStandardsCompareField -FieldName 'standards.SafeLinksPolicy' -CurrentValue $CurrentValue -ExpectedValue $ExpectedValue -Tenant $Tenant
         }
     } else {
         if ($Settings.remediate -eq $true) {
